@@ -302,6 +302,7 @@ def main():
         print("\nStep 2: Normalizing publisher names...")
         publisher_map = {}
         publishers_for_ai = []
+        rules_normalized_count = 0
         
         for name in all_publishers:
             if name in publisher_cache:
@@ -311,10 +312,13 @@ def main():
             for keywords, canonical in rules:
                 if any(kw in lower_name for kw in keywords):
                     publisher_map[name] = canonical; publisher_cache[name] = canonical
+                    if name != canonical:
+                        rules_normalized_count += 1
                     found_rule = True; break
             if not found_rule: publishers_for_ai.append(name)
         
         ai_results = {}
+        ai_normalized_count = 0
         if publishers_for_ai:
             if use_ai:
                 if not API_KEY: print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
@@ -324,12 +328,20 @@ def main():
                         ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
                         publisher_map.update(ai_results)
                         publisher_cache.update(ai_results)
+                        ai_normalized_count = sum(1 for original, normalized in ai_results.items() if original != normalized)
                     except FileNotFoundError:
                         print(f"\n[!] Prompt file not found at '{prompt_filepath}'. Skipping AI normalization.")
             elif verbose:
                  print(f"[i] {len(publishers_for_ai)} publisher(s) could be normalized. Run with --ai to enable.")
         
         print("Normalization complete.")
+        
+        print("\n--- Normalization Stats ---")
+        print(f"Publishers normalized by rules: {rules_normalized_count}")
+        if use_ai:
+            print(f"Publishers normalized by AI:    {ai_normalized_count}")
+        print("---------------------------")
+
 
         print("\nStep 3: Assembling final results...")
         final_metadata = {}
