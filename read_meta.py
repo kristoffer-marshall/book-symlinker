@@ -17,6 +17,24 @@ METADATA_CACHE_FILE = 'metadata_cache.json'
 PUBLISHER_CACHE_FILE = 'publisher_cache.json'
 DEFAULT_PROMPT_FILE = 'prompt.txt'
 
+def show_help():
+    """Prints the help message and usage information."""
+    print("Usage: python read_meta.py [directory] [options]")
+    print("\nExtracts metadata from .epub and .pdf files in a specified directory.")
+    print("\nIf no directory is provided, the current working directory is used.")
+    print("\nOptions:")
+    print("  [directory]             Optional path to the directory to scan.")
+    print("  -h, --help              Show this help message and exit.")
+    print("  -t, --threads NUMBER    Set the number of threads to use for processing.")
+    print("                          (default: number of CPU cores)")
+    print("  -p, --prompt FILE       Path to a custom prompt file for the AI.")
+    print(f"                         (default: {DEFAULT_PROMPT_FILE})")
+    print("  -o, --output FILE       Path to the output JSON file.")
+    print("                          (default: metadata-processed.json)")
+    print("  -v, --verbose           Enable verbose output to see detailed progress and errors.")
+    print("  --force-reload          Ignore the cache and re-process all files.")
+
+
 def load_cache(cache_file):
     """Loads a generic cache from a JSON file, handling empty or corrupt files."""
     if os.path.exists(cache_file):
@@ -128,6 +146,11 @@ def check_file_cache(file_path, cached_entry, verbose=False):
 def main():
     """Main function to find and process files, collecting their metadata."""
     args = sys.argv[1:]
+
+    if '-h' in args or '--help' in args:
+        show_help()
+        return
+
     verbose = '-v' in args or '--verbose' in args
     force_reload = '--force-reload' in args
     args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload')]
