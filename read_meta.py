@@ -277,6 +277,7 @@ def main():
                     found_rule = True; break
             if not found_rule: publishers_for_ai.append(name)
         
+        ai_results = {}
         if publishers_for_ai:
             if use_ai:
                 if not API_KEY: print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
@@ -298,6 +299,11 @@ def main():
         for raw_meta in raw_metadata_list:
             publisher = raw_meta['publisher']
             normalized = publisher_map.get(publisher, publisher)
+            
+            if verbose and publisher != normalized:
+                source = "(AI)" if publisher in ai_results else "(rule)"
+                print(f"  [v] Normalized '{raw_meta['filename']}': '{publisher}' -> '{normalized}' {source}")
+
             final_metadata[raw_meta['filename']] = {
                 'title': raw_meta['title'],
                 'authors': raw_meta['authors'],
