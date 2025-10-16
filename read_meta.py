@@ -77,33 +77,47 @@ def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False
     Normalizes a list of publisher names in a single batch API call.
     Returns a dictionary mapping original names to normalized names.
     """
-    normalized_map = {}
+    all_normalized_maps = {}
+    chunk_size = 50  # Process 50 publishers per API call
+    
     if not publisher_list:
-        return normalized_map
+        return all_normalized_maps
 
     if verbose:
-        print(f"\n[i] Normalizing {len(publisher_list)} unique publisher(s) with AI...")
+        print(f"\n[i] Normalizing {len(publisher_list)} unique publisher(s) with AI in chunks of {chunk_size}...")
 
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={API_KEY}"
-    publisher_json_string = json.dumps(publisher_list)
-    prompt = prompt_template.format(publisher_json_string=publisher_json_string)
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {'Content-Type': 'application/json'}
-
-    try:
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        result = response.json()
-        ai_response_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-        json_str = ai_response_text.strip('` \n').removeprefix('json').strip()
-        normalized_map = json.loads(json_str)
+    
+    # Split the list into chunks
+    chunks = [publisher_list[i:i + chunk_size] for i in range(0, len(publisher_list), chunk_size)]
+    
+    for i, chunk in enumerate(chunks):
         if verbose:
-            print("[i] AI normalization successful.")
-    except requests.exceptions.RequestException as e:
-        if verbose: print(f"\n[!] API Error during batch normalization: {e}")
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        if verbose: print(f"\n[!] Could not parse AI batch response: {e}\n    Raw response was: {ai_response_text}")
-    return normalized_map
+            print(f"  - Processing chunk {i+1} of {len(chunks)}...")
+
+        publisher_json_string = json.dumps(chunk)
+        prompt = prompt_template.format(publisher_json_string=publisher_json_string)
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+        try:
+            # Increased timeout to 90 seconds for more resilience
+            response = requests.post(api_url, json=payload, headers=headers, timeout=90)
+            response.raise_for_status()
+            result = response.json()
+            ai_response_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+            json_str = ai_response_text.strip('` \n').removeprefix('json').strip()
+            normalized_map_chunk = json.loads(json_str)
+            all_normalized_maps.update(normalized_map_chunk)
+        except requests.exceptions.RequestException as e:
+            if verbose: print(f"\n[!] API Error during batch normalization on chunk {i+1}: {e}")
+        except (KeyError, IndexError, json.JSONDecodeError) as e:
+            if verbose: print(f"\n[!] Could not parse AI batch response for chunk {i+1}: {e}\n    Raw response was: {ai_response_text}")
+
+    if verbose and all_normalized_maps:
+        print("[i] AI normalization successful.")
+        
+    return all_normalized_maps
 
 def extract_epub_metadata(file_path, verbose=False):
     """Extracts raw metadata from an EPUB file."""
