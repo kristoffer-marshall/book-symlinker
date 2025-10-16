@@ -193,15 +193,19 @@ def main():
         print("Step 1: Checking file cache...")
         for file_path in all_files_in_dir:
             if force_reload:
+                if verbose: print(f"  - Forcing reload for: {os.path.basename(file_path)}")
                 files_to_process.append(file_path)
                 continue
             
+            if verbose: print(f"  - Checking: {os.path.basename(file_path)}...")
             current_md5 = calculate_md5(file_path)
             cached_entry = metadata_cache.get(file_path)
 
             if cached_entry and cached_entry.get('md5sum') == current_md5:
+                if verbose: print("    Cache HIT.")
                 raw_metadata_list.append(cached_entry['metadata'])
             else:
+                if verbose: print("    Cache MISS. Adding to processing queue.")
                 files_to_process.append(file_path)
         
         total_to_process = len(files_to_process)
