@@ -5,7 +5,7 @@ from PyPDF2 import PdfReader
 from ebooklib import epub
 import ebooklib
 
-def get_epub_metadata(file_path):
+def get_epub_metadata(file_path, verbose=False):
     """
     Extracts title, author, and publisher metadata from an EPUB file.
     """
@@ -18,10 +18,12 @@ def get_epub_metadata(file_path):
         }
         return metadata
     except Exception as e:
-        print(f"  Could not process EPUB {os.path.basename(file_path)}: {e}")
+        if verbose:
+            # Print a newline to avoid overwriting the progress bar, then show the error
+            print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
         return None
 
-def get_pdf_metadata(file_path):
+def get_pdf_metadata(file_path, verbose=False):
     """
     Extracts title, author, and producer (as publisher) metadata from a PDF file.
     """
@@ -32,7 +34,6 @@ def get_pdf_metadata(file_path):
             if not meta:
                 return {'title': 'N/A', 'authors': [], 'publisher': 'N/A'}
             
-            # PDF metadata fields can be inconsistent; we fall back gracefully.
             authors = [meta.author] if meta.author else []
 
             metadata = {
@@ -42,16 +43,25 @@ def get_pdf_metadata(file_path):
             }
             return metadata
     except Exception as e:
-        print(f"  Could not process PDF {os.path.basename(file_path)}: {e}")
+        if verbose:
+            # Print a newline to avoid overwriting the progress bar, then show the error
+            print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
         return None
 
 def main():
     """
     Main function to find and process files, collecting their metadata.
-    Accepts an optional command-line argument for the target directory.
+    Accepts an optional command-line argument for the target directory
+    and a verbose flag (-v or --verbose) to show errors.
     """
-    if len(sys.argv) > 1:
-        target_directory = sys.argv[1]
+    args = sys.argv[1:]
+    verbose = '-v' in args or '--verbose' in args
+
+    # Remove verbose flags to find the directory path argument
+    args = [arg for arg in args if arg not in ('-v', '--verbose')]
+
+    if args:
+        target_directory = args[0]
     else:
         target_directory = os.getcwd()
 
@@ -59,26 +69,43 @@ def main():
         print(f"Error: The specified path '{target_directory}' is not a valid directory.")
         return
 
-    print(f"Scanning for files in: {target_directory}\n")
+    print(f"Scanning for files in: {target_directory}")
 
     all_metadata = {}
+    
+    files_to_process = [f for f in os.listdir(target_directory) if f.lower().endswith(('.epub', '.pdf'))]
+    total_files = len(files_to_process)
 
-    for filename in os.listdir(target_directory):
+    if total_files == 0:
+        print(f"No .epub or .pdf files found in '{target_directory}'.")
+        return
+
+    for i, filename in enumerate(files_to_process):
         file_path = os.path.join(target_directory, filename)
         
         book_meta = None
         if filename.lower().endswith('.epub'):
-            book_meta = get_epub_metadata(file_path)
+            book_meta = get_epub_metadata(file_path, verbose)
         elif filename.lower().endswith('.pdf'):
-            book_meta = get_pdf_metadata(file_path)
+            book_meta = get_pdf_metadata(file_path, verbose)
         
         if book_meta:
             all_metadata[filename] = book_meta
+        
+        processed_count = i + 1
+        percent = (processed_count / total_files) * 100
+        bar_length = 40
+        filled_length = int(bar_length * processed_count // total_files)
+        bar = '█' * filled_length + '-' * (bar_length - filled_length)
+        
+        # Write progress bar. Error messages will appear on separate lines.
+        sys.stdout.write(f'\rProgress: |{bar}| {processed_count}/{total_files} ({percent:.1f}%)')
+        sys.stdout.flush()
+
+    print() # Final newline after progress bar completes
 
     print("\n--- All Collected Metadata ---")
-    # Use json.dumps for a clean, readable printout of the final dictionary
     print(json.dumps(all_metadata, indent=2))
-
 
 if __name__ == "__main__":
     main()
