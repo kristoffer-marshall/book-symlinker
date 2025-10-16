@@ -8,11 +8,13 @@ from dotenv import load_dotenv # You may need to run: pip install python-dotenv
 from PyPDF2 import PdfReader
 from ebooklib import epub
 import ebooklib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
 load_dotenv() # Load variables from the .env file into the environment
 API_KEY = os.getenv("GEMINI_API_KEY") 
 CACHE_FILE = 'publisher_cache.json'
+DEFAULT_PROMPT_FILE = 'prompt.txt'
 
 def load_cache():
     """Loads the publisher normalization cache from a JSON file."""
@@ -26,7 +28,7 @@ def save_cache(cache_data):
     with open(CACHE_FILE, 'w') as f:
         json.dump(cache_data, f, indent=2)
 
-def normalize_publishers_batch_ai(publisher_list, verbose=False):
+def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False):
     """
     Normalizes a list of publisher names in a single batch API call.
     Returns a dictionary mapping original names to normalized names.
@@ -40,20 +42,10 @@ def normalize_publishers_batch_ai(publisher_list, verbose=False):
 
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={API_KEY}"
     
-    # Create a JSON string representation of the list for the prompt
     publisher_json_string = json.dumps(publisher_list)
-
-    prompt = (
-        "You are a data normalization expert specializing in book publishers. "
-        "Your task is to process a JSON array of publisher names and return a single JSON object. "
-        "The keys of the returned JSON object must be the original publisher names from the input array, "
-        "and the values must be their official, canonical names. Find names that are of the same publisher, "
-        "but may have some nuances, like an extra period, 'LLC' or 'Inc' at the end, spelling errors, or differences "
-        "in capitalization. If there are multiple names for the same publisher, choose the most correct name and return only that "
-        "for said publishers."
-        "Return ONLY the JSON object and nothing else. "
-        f"Input publishers: {publisher_json_string}"
-    )
+    
+    # Use the prompt template read from the file
+    prompt = prompt_template.format(publisher_json_string=publisher_json_string)
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     headers = {'Content-Type': 'application/json'}
@@ -65,7 +57,6 @@ def normalize_publishers_batch_ai(publisher_list, verbose=False):
         
         ai_response_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
         
-        # Clean the response to make it valid JSON
         json_str = ai_response_text.strip('` \n').removeprefix('json').strip()
 
         normalized_map = json.loads(json_str)
@@ -120,11 +111,56 @@ def extract_pdf_metadata(file_path, verbose=False):
             print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
         return None
 
+def process_file(file_path, verbose=False):
+    """
+    Processes a single file to extract its metadata.
+    Designed to be run in a separate thread.
+    """
+    filename = os.path.basename(file_path)
+    book_meta = None
+    if filename.lower().endswith('.epub'):
+        book_meta = extract_epub_metadata(file_path, verbose)
+    elif filename.lower().endswith('.pdf'):
+        book_meta = extract_pdf_metadata(file_path, verbose)
+    
+    if book_meta:
+        book_meta['filename'] = filename
+    return book_meta
+
 def main():
     """Main function to find and process files, collecting their metadata."""
     args = sys.argv[1:]
     verbose = '-v' in args or '--verbose' in args
     args = [arg for arg in args if arg not in ('-v', '--verbose')]
+
+    num_threads = os.cpu_count() or 4
+    prompt_filepath = DEFAULT_PROMPT_FILE
+    
+    # --- Argument Parsing ---
+    # Use a while loop to safely remove items as we iterate
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ('-t', '--threads'):
+            try:
+                num_threads = int(args[i + 1])
+                if num_threads <= 0: raise ValueError
+                args.pop(i) # Remove flag
+                args.pop(i) # Remove value
+                continue
+            except (ValueError, IndexError):
+                print(f"Error: {arg} requires a positive integer. e.g., {arg} 8")
+                return
+        elif arg in ('-p', '--prompt'):
+            try:
+                prompt_filepath = args[i + 1]
+                args.pop(i) # Remove flag
+                args.pop(i) # Remove value
+                continue
+            except IndexError:
+                print(f"Error: {arg} requires a file path argument.")
+                return
+        i += 1
 
     target_directory = args[0] if args else os.getcwd()
 
@@ -141,35 +177,33 @@ def main():
             print(f"No .epub or .pdf files found in '{target_directory}'.")
             return
 
-        # --- Step 1: Extract all raw metadata ---
-        print(f"Step 1: Extracting raw metadata from {total_files} files in '{target_directory}'...")
+        # --- Step 1: Extract all raw metadata using a thread pool ---
+        print(f"Step 1: Extracting raw metadata from {total_files} files in '{target_directory}' using {num_threads} threads...")
         raw_metadata_list = []
         all_publishers = set()
 
-        for i, filename in enumerate(files_to_process):
-            file_path = os.path.join(target_directory, filename)
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {executor.submit(process_file, os.path.join(target_directory, f), verbose): f for f in files_to_process}
             
-            book_meta = None
-            if filename.lower().endswith('.epub'):
-                book_meta = extract_epub_metadata(file_path, verbose)
-            elif filename.lower().endswith('.pdf'):
-                book_meta = extract_pdf_metadata(file_path, verbose)
-            
-            if book_meta:
-                book_meta['filename'] = filename # Store filename for later
-                raw_metadata_list.append(book_meta)
-                if book_meta['publisher'] and book_meta['publisher'] != 'N/A':
-                    all_publishers.add(book_meta['publisher'])
+            processed_count = 0
+            for future in as_completed(futures):
+                book_meta = future.result()
+                
+                if book_meta:
+                    raw_metadata_list.append(book_meta)
+                    if book_meta['publisher'] and book_meta['publisher'] != 'N/A':
+                        all_publishers.add(book_meta['publisher'])
 
-            percent = ((i + 1) / total_files) * 100
-            bar = '█' * int(percent / 2) + '-' * (50 - int(percent / 2))
-            sys.stdout.write(f'\rProgress: |{bar}| {i + 1}/{total_files} ({percent:.1f}%)')
-            sys.stdout.flush()
+                processed_count += 1
+                percent = (processed_count / total_files) * 100
+                bar = '█' * int(percent / 2) + '-' * (50 - int(percent / 2))
+                sys.stdout.write(f'\rProgress: |{bar}| {processed_count}/{total_files} ({percent:.1f}%)')
+                sys.stdout.flush()
         print("\nExtraction complete.")
 
         # --- Step 2: Normalize all unique publisher names ---
         print("\nStep 2: Normalizing publisher names...")
-        publisher_map = {} # Maps original name to normalized name
+        publisher_map = {}
         publishers_for_ai = []
 
         rules = [
@@ -200,9 +234,15 @@ def main():
             if not API_KEY:
                 print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
             else:
-                ai_results = normalize_publishers_batch_ai(publishers_for_ai, verbose)
-                publisher_map.update(ai_results)
-                publisher_cache.update(ai_results) # Update cache with new results
+                try:
+                    with open(prompt_filepath, 'r') as f:
+                        prompt_template = f.read()
+                    
+                    ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
+                    publisher_map.update(ai_results)
+                    publisher_cache.update(ai_results)
+                except FileNotFoundError:
+                    print(f"\n[!] Prompt file not found at '{prompt_filepath}'. Skipping AI normalization.")
         
         print("Normalization complete.")
 
@@ -211,7 +251,7 @@ def main():
         final_metadata = {}
         for raw_meta in raw_metadata_list:
             publisher = raw_meta['publisher']
-            normalized = publisher_map.get(publisher, publisher) # Default to original if lookup fails
+            normalized = publisher_map.get(publisher, publisher)
             
             final_metadata[raw_meta['filename']] = {
                 'title': raw_meta['title'],
