@@ -29,8 +29,11 @@ def calculate_md5(file_path):
         return None
 
 def load_cache(cache_file):
-    """Loads a generic cache from a JSON file."""
+    """Loads a generic cache from a JSON file, handling empty or corrupt files."""
     if os.path.exists(cache_file):
+        # Check for empty file before trying to load
+        if os.path.getsize(cache_file) == 0:
+            return {}
         with open(cache_file, 'r') as f:
             try:
                 return json.load(f)
@@ -282,6 +285,11 @@ def main():
 
         print("\n--- All Collected Metadata ---")
         print(json.dumps(final_metadata, indent=2))
+
+    except KeyboardInterrupt:
+        print("\n\n[!] Keyboard interrupt received. Exiting gracefully.")
+        # The 'finally' block below will still execute to save the cache.
+        sys.exit(130) # Standard exit code for CTRL+C
 
     finally:
         print("\nSaving caches...")
