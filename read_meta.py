@@ -1,31 +1,46 @@
 import os
 import sys
 import json
-import re
+import hashlib
 import time
-import requests 
-from dotenv import load_dotenv # You may need to run: pip install python-dotenv
+import requests
+from dotenv import load_dotenv  # You may need to run: pip install python-dotenv
 from PyPDF2 import PdfReader
 from ebooklib import epub
 import ebooklib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
-load_dotenv() # Load variables from the .env file into the environment
-API_KEY = os.getenv("GEMINI_API_KEY") 
-CACHE_FILE = 'publisher_cache.json'
+load_dotenv()  # Load variables from the .env file into the environment
+API_KEY = os.getenv("GEMINI_API_KEY")
+METADATA_CACHE_FILE = 'metadata_cache.json'
+PUBLISHER_CACHE_FILE = 'publisher_cache.json'
 DEFAULT_PROMPT_FILE = 'prompt.txt'
 
-def load_cache():
-    """Loads the publisher normalization cache from a JSON file."""
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'r') as f:
-            return json.load(f)
+def calculate_md5(file_path):
+    """Calculates the MD5 hash of a file in a memory-efficient way."""
+    hash_md5 = hashlib.md5()
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+    except FileNotFoundError:
+        return None
+
+def load_cache(cache_file):
+    """Loads a generic cache from a JSON file."""
+    if os.path.exists(cache_file):
+        with open(cache_file, 'r') as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {} # Return empty dict if cache is corrupt
     return {}
 
-def save_cache(cache_data):
-    """Saves the publisher normalization cache to a JSON file."""
-    with open(CACHE_FILE, 'w') as f:
+def save_cache(cache_data, cache_file):
+    """Saves a generic cache to a JSON file."""
+    with open(cache_file, 'w') as f:
         json.dump(cache_data, f, indent=2)
 
 def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False):
@@ -44,7 +59,6 @@ def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False
     
     publisher_json_string = json.dumps(publisher_list)
     
-    # Use the prompt template read from the file
     prompt = prompt_template.format(publisher_json_string=publisher_json_string)
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -131,13 +145,12 @@ def main():
     """Main function to find and process files, collecting their metadata."""
     args = sys.argv[1:]
     verbose = '-v' in args or '--verbose' in args
-    args = [arg for arg in args if arg not in ('-v', '--verbose')]
+    force_reload = '--force-reload' in args
+    args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload')]
 
     num_threads = os.cpu_count() or 4
     prompt_filepath = DEFAULT_PROMPT_FILE
     
-    # --- Argument Parsing ---
-    # Use a while loop to safely remove items as we iterate
     i = 0
     while i < len(args):
         arg = args[i]
@@ -145,88 +158,98 @@ def main():
             try:
                 num_threads = int(args[i + 1])
                 if num_threads <= 0: raise ValueError
-                args.pop(i) # Remove flag
-                args.pop(i) # Remove value
+                args.pop(i); args.pop(i)
                 continue
             except (ValueError, IndexError):
-                print(f"Error: {arg} requires a positive integer. e.g., {arg} 8")
-                return
+                print(f"Error: {arg} requires a positive integer."); return
         elif arg in ('-p', '--prompt'):
             try:
                 prompt_filepath = args[i + 1]
-                args.pop(i) # Remove flag
-                args.pop(i) # Remove value
+                args.pop(i); args.pop(i)
                 continue
             except IndexError:
-                print(f"Error: {arg} requires a file path argument.")
-                return
+                print(f"Error: {arg} requires a file path argument."); return
         i += 1
 
     target_directory = args[0] if args else os.getcwd()
 
     if not os.path.isdir(target_directory):
-        print(f"Error: The specified path '{target_directory}' is not a valid directory.")
-        return
+        print(f"Error: The specified path '{target_directory}' is not a valid directory."); return
 
-    publisher_cache = load_cache()
+    metadata_cache = load_cache(METADATA_CACHE_FILE)
+    publisher_cache = load_cache(PUBLISHER_CACHE_FILE)
     
     try:
-        files_to_process = [f for f in os.listdir(target_directory) if f.lower().endswith(('.epub', '.pdf'))]
-        total_files = len(files_to_process)
-        if total_files == 0:
-            print(f"No .epub or .pdf files found in '{target_directory}'.")
-            return
+        all_files_in_dir = [os.path.join(target_directory, f) for f in os.listdir(target_directory) if f.lower().endswith(('.epub', '.pdf'))]
+        if not all_files_in_dir:
+            print(f"No .epub or .pdf files found in '{target_directory}'."); return
 
-        # --- Step 1: Extract all raw metadata using a thread pool ---
-        print(f"Step 1: Extracting raw metadata from {total_files} files in '{target_directory}' using {num_threads} threads...")
         raw_metadata_list = []
-        all_publishers = set()
+        files_to_process = []
 
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = {executor.submit(process_file, os.path.join(target_directory, f), verbose): f for f in files_to_process}
+        print("Step 1: Checking file cache...")
+        for file_path in all_files_in_dir:
+            if force_reload:
+                files_to_process.append(file_path)
+                continue
             
-            processed_count = 0
-            for future in as_completed(futures):
-                book_meta = future.result()
+            current_md5 = calculate_md5(file_path)
+            cached_entry = metadata_cache.get(file_path)
+
+            if cached_entry and cached_entry.get('md5sum') == current_md5:
+                raw_metadata_list.append(cached_entry['metadata'])
+            else:
+                files_to_process.append(file_path)
+        
+        total_to_process = len(files_to_process)
+        if total_to_process > 0:
+            print(f"Found {total_to_process} new or modified file(s). Processing with {num_threads} threads...")
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                futures = {executor.submit(process_file, f, verbose): f for f in files_to_process}
                 
-                if book_meta:
-                    raw_metadata_list.append(book_meta)
-                    if book_meta['publisher'] and book_meta['publisher'] != 'N/A':
-                        all_publishers.add(book_meta['publisher'])
+                processed_count = 0
+                for future in as_completed(futures):
+                    file_path = futures[future]
+                    book_meta = future.result()
+                    
+                    if book_meta:
+                        raw_metadata_list.append(book_meta)
+                        current_md5 = calculate_md5(file_path)
+                        metadata_cache[file_path] = {
+                            'md5sum': current_md5,
+                            'metadata': book_meta
+                        }
+                    
+                    processed_count += 1
+                    percent = (processed_count / total_to_process) * 100
+                    bar = '█' * int(percent / 2) + '-' * (50 - int(percent / 2))
+                    sys.stdout.write(f'\rProgress: |{bar}| {processed_count}/{total_to_process} ({percent:.1f}%)')
+                    sys.stdout.flush()
+            print("\nExtraction complete.")
+        else:
+            print("No new or modified files to process. Loading all metadata from cache.")
 
-                processed_count += 1
-                percent = (processed_count / total_files) * 100
-                bar = '█' * int(percent / 2) + '-' * (50 - int(percent / 2))
-                sys.stdout.write(f'\rProgress: |{bar}| {processed_count}/{total_files} ({percent:.1f}%)')
-                sys.stdout.flush()
-        print("\nExtraction complete.")
-
-        # --- Step 2: Normalize all unique publisher names ---
+        all_publishers = {meta['publisher'] for meta in raw_metadata_list if meta.get('publisher') and meta['publisher'] != 'N/A'}
+        
         print("\nStep 2: Normalizing publisher names...")
         publisher_map = {}
         publishers_for_ai = []
 
         rules = [
-            (['packt', 'paclt'], 'Packt Publishing'),
-            (["o'reilly", "o’reilly"], "O'Reilly Media"),
-            (['mercury learning'], 'Mercury Learning and Information'),
-            (['leaping hare'], 'Leaping Hare Press'),
+            (['packt', 'paclt'], 'Packt Publishing'), (["o'reilly", "o’reilly"], "O'Reilly Media"),
+            (['mercury learning'], 'Mercury Learning and Information'), (['leaping hare'], 'Leaping Hare Press'),
             (['berrett-koehler'], 'Berrett-Koehler Publishers')
         ]
 
         for name in all_publishers:
             if name in publisher_cache:
-                publisher_map[name] = publisher_cache[name]
-                continue
-            
+                publisher_map[name] = publisher_cache[name]; continue
             lower_name = name.lower()
             found_rule = False
             for keywords, canonical in rules:
                 if any(kw in lower_name for kw in keywords):
-                    publisher_map[name] = canonical
-                    publisher_cache[name] = canonical
-                    found_rule = True
-                    break
+                    publisher_map[name] = canonical; publisher_cache[name] = canonical
+                    found_rule = True; break
             if not found_rule:
                 publishers_for_ai.append(name)
         
@@ -237,22 +260,18 @@ def main():
                 try:
                     with open(prompt_filepath, 'r') as f:
                         prompt_template = f.read()
-                    
                     ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
                     publisher_map.update(ai_results)
                     publisher_cache.update(ai_results)
                 except FileNotFoundError:
                     print(f"\n[!] Prompt file not found at '{prompt_filepath}'. Skipping AI normalization.")
-        
         print("Normalization complete.")
 
-        # --- Step 3: Assemble final metadata ---
         print("\nStep 3: Assembling final results...")
         final_metadata = {}
         for raw_meta in raw_metadata_list:
             publisher = raw_meta['publisher']
             normalized = publisher_map.get(publisher, publisher)
-            
             final_metadata[raw_meta['filename']] = {
                 'title': raw_meta['title'],
                 'authors': raw_meta['authors'],
@@ -265,8 +284,9 @@ def main():
         print(json.dumps(final_metadata, indent=2))
 
     finally:
-        print("\nSaving publisher cache...")
-        save_cache(publisher_cache)
+        print("\nSaving caches...")
+        save_cache(metadata_cache, METADATA_CACHE_FILE)
+        save_cache(publisher_cache, PUBLISHER_CACHE_FILE)
         print("Done.")
 
 if __name__ == "__main__":
