@@ -17,17 +17,6 @@ METADATA_CACHE_FILE = 'metadata_cache.json'
 PUBLISHER_CACHE_FILE = 'publisher_cache.json'
 DEFAULT_PROMPT_FILE = 'prompt.txt'
 
-def calculate_md5(file_path):
-    """Calculates the MD5 hash of a file in a memory-efficient way."""
-    hash_md5 = hashlib.md5()
-    try:
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
-    except FileNotFoundError:
-        return None
-
 def load_cache(cache_file):
     """Loads a generic cache from a JSON file, handling empty or corrupt files."""
     if os.path.exists(cache_file):
@@ -121,10 +110,15 @@ def process_file(file_path, verbose=False):
     return book_meta
 
 def check_file_cache(file_path, cached_entry, verbose=False):
-    """Checks a single file against the cache for thread execution."""
+    """Checks a single file against the cache using modification time."""
     if verbose: print(f"\n  - Checking: {os.path.basename(file_path)}...")
-    current_md5 = calculate_md5(file_path)
-    if cached_entry and cached_entry.get('md5sum') == current_md5:
+    try:
+        current_mtime = os.path.getmtime(file_path)
+    except FileNotFoundError:
+        if verbose: print(f"    File not found for cache check: {os.path.basename(file_path)}.")
+        return ('MISS', file_path, None)
+
+    if cached_entry and cached_entry.get('mtime') == current_mtime:
         if verbose: print(f"    Cache HIT for {os.path.basename(file_path)}.")
         return ('HIT', file_path, cached_entry['metadata'])
     else:
@@ -222,7 +216,12 @@ def main():
                     book_meta = future.result()
                     if book_meta:
                         raw_metadata_list.append(book_meta)
-                        metadata_cache[file_path] = { 'md5sum': calculate_md5(file_path), 'metadata': book_meta }
+                        try:
+                            mtime = os.path.getmtime(file_path)
+                            metadata_cache[file_path] = { 'mtime': mtime, 'metadata': book_meta }
+                        except FileNotFoundError:
+                            if verbose: print(f"\n[!] Could not get mtime for {os.path.basename(file_path)}, file not found.")
+
                     processed_count += 1
                     percent = (processed_count / total_to_process) * 100
                     bar = '█' * int(percent / 2) + '-' * (50 - int(percent / 2))
