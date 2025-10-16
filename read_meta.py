@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import hashlib
+import csv
 import time
 import requests
 from dotenv import load_dotenv  # You may need to run: pip install python-dotenv
@@ -16,6 +16,7 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 METADATA_CACHE_FILE = 'metadata_cache.json'
 PUBLISHER_CACHE_FILE = 'publisher_cache.json'
 DEFAULT_PROMPT_FILE = 'prompt.txt'
+DEFAULT_RULES_FILE = 'publisher_rules.csv'
 
 def show_help():
     """Prints the help message and usage information."""
@@ -31,6 +32,8 @@ def show_help():
     print(f"                         (default: {DEFAULT_PROMPT_FILE})")
     print("  -o, --output FILE       Path to the output JSON file.")
     print("                          (default: metadata-processed.json)")
+    print("  -r, --rules FILE        Path to a custom publisher normalization CSV file.")
+    print(f"                         (default: {DEFAULT_RULES_FILE})")
     print("  -v, --verbose           Enable verbose output to see detailed progress and errors.")
     print("  --force-reload          Ignore the cache and re-process all files.")
     print("  --ai                    Enable AI to normalize publisher names (requires API key).")
@@ -52,6 +55,22 @@ def save_cache(cache_data, cache_file):
     """Saves a generic cache to a JSON file."""
     with open(cache_file, 'w') as f:
         json.dump(cache_data, f, indent=2)
+
+def load_rules_from_csv(filepath, verbose=False):
+    """Loads normalization rules from a CSV file."""
+    rules = []
+    try:
+        with open(filepath, 'r', newline='') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if not row: continue
+                canonical_name = row[0]
+                keywords = [k.lower() for k in row[1:] if k]
+                rules.append((keywords, canonical_name))
+        if verbose: print(f"[i] Loaded {len(rules)} normalization rules from '{filepath}'.")
+    except FileNotFoundError:
+        if verbose: print(f"[!] Rules file not found at '{filepath}'. No rules loaded.")
+    return rules
 
 def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False):
     """
@@ -161,6 +180,7 @@ def main():
     num_threads = os.cpu_count() or 4
     prompt_filepath = DEFAULT_PROMPT_FILE
     output_filename = 'metadata-processed.json'
+    rules_filepath = DEFAULT_RULES_FILE
     
     # Argument parsing
     positional_args = []
@@ -186,6 +206,12 @@ def main():
                 i += 2
             except IndexError:
                 print(f"Error: {arg} requires a file path argument."); return
+        elif arg in ('-r', '--rules'):
+            try:
+                rules_filepath = args[i + 1]
+                i += 2
+            except IndexError:
+                print(f"Error: {arg} requires a file path argument."); return
         else:
             positional_args.append(arg)
             i += 1
@@ -197,6 +223,7 @@ def main():
 
     metadata_cache = load_cache(METADATA_CACHE_FILE)
     publisher_cache = load_cache(PUBLISHER_CACHE_FILE)
+    rules = load_rules_from_csv(rules_filepath, verbose)
     
     try:
         all_files_in_dir = [os.path.join(target_directory, f) for f in os.listdir(target_directory) if f.lower().endswith(('.epub', '.pdf'))]
@@ -261,11 +288,7 @@ def main():
         print("\nStep 2: Normalizing publisher names...")
         publisher_map = {}
         publishers_for_ai = []
-        rules = [
-            (['packt', 'paclt'], 'Packt Publishing'), (["o'reilly", "o’reilly"], "O'Reilly Media"),
-            (['mercury learning'], 'Mercury Learning and Information'), (['leaping hare'], 'Leaping Hare Press'),
-            (['berrett-koehler'], 'Berrett-Koehler Publishers')
-        ]
+        
         for name in all_publishers:
             if name in publisher_cache:
                 publisher_map[name] = publisher_cache[name]; continue
