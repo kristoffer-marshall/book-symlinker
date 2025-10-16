@@ -57,14 +57,16 @@ def save_cache(cache_data, cache_file):
         json.dump(cache_data, f, indent=2)
 
 def load_rules_from_csv(filepath, verbose=False):
-    """Loads normalization rules from a CSV file."""
+    """Loads normalization rules from a CSV file where all fields are quoted."""
     rules = []
     try:
         with open(filepath, 'r', newline='') as f:
-            reader = csv.reader(f)
+            # Use QUOTE_ALL to specify that all fields are wrapped in quotes
+            reader = csv.reader(f, quoting=csv.QUOTE_ALL)
             for row in reader:
                 if not row: continue
                 canonical_name = row[0]
+                # The csv reader automatically handles removing the quotes
                 keywords = [k.lower() for k in row[1:] if k]
                 rules.append((keywords, canonical_name))
         if verbose: print(f"[i] Loaded {len(rules)} normalization rules from '{filepath}'.")
@@ -306,25 +308,41 @@ def main():
         
         for name in all_publishers:
             if name in publisher_cache:
-                publisher_map[name] = publisher_cache[name]; continue
+                publisher_map[name] = publisher_cache[name]
+                if name != publisher_cache[name]: # Count cached normalizations that were from rules
+                    # This logic is imperfect but gives a decent estimate
+                    lower_name = name.lower()
+                    is_rule_match = False
+                    for keywords, _ in rules:
+                        if any(kw in lower_name for kw in keywords):
+                            rules_normalized_count += 1
+                            is_rule_match = True
+                            break
+                continue
+
             lower_name = name.lower()
             found_rule = False
             for keywords, canonical in rules:
                 if any(kw in lower_name for kw in keywords):
-                    publisher_map[name] = canonical; publisher_cache[name] = canonical
+                    publisher_map[name] = canonical
+                    publisher_cache[name] = canonical
                     if name != canonical:
                         rules_normalized_count += 1
-                    found_rule = True; break
-            if not found_rule: publishers_for_ai.append(name)
+                    found_rule = True
+                    break
+            if not found_rule:
+                publishers_for_ai.append(name)
         
         ai_results = {}
         ai_normalized_count = 0
         if publishers_for_ai:
             if use_ai:
-                if not API_KEY: print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
+                if not API_KEY:
+                    print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
                 else:
                     try:
-                        with open(prompt_filepath, 'r') as f: prompt_template = f.read()
+                        with open(prompt_filepath, 'r') as f:
+                            prompt_template = f.read()
                         ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
                         publisher_map.update(ai_results)
                         publisher_cache.update(ai_results)
