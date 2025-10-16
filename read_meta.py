@@ -138,23 +138,40 @@ def main():
     force_reload = '--force-reload' in args
     args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload')]
 
+    # Defaults
     num_threads = os.cpu_count() or 4
     prompt_filepath = DEFAULT_PROMPT_FILE
+    output_filename = 'metadata-processed.json'
     
+    # Argument parsing
+    positional_args = []
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in ('-t', '--threads'):
             try:
-                num_threads = int(args[i + 1]); i += 1
+                num_threads = int(args[i + 1])
                 if num_threads <= 0: raise ValueError
-            except (ValueError, IndexError): print(f"Error: {arg} requires a positive integer."); return
+                i += 2
+            except (ValueError, IndexError):
+                print(f"Error: {arg} requires a positive integer."); return
         elif arg in ('-p', '--prompt'):
-            try: prompt_filepath = args[i + 1]; i += 1
-            except IndexError: print(f"Error: {arg} requires a file path argument."); return
-        i += 1
+            try:
+                prompt_filepath = args[i + 1]
+                i += 2
+            except IndexError:
+                print(f"Error: {arg} requires a file path argument."); return
+        elif arg in ('-o', '--output'):
+            try:
+                output_filename = args[i + 1]
+                i += 2
+            except IndexError:
+                print(f"Error: {arg} requires a file path argument."); return
+        else:
+            positional_args.append(arg)
+            i += 1
 
-    target_directory = args[0] if args and not args[0].startswith('-') else os.getcwd()
+    target_directory = positional_args[0] if positional_args else os.getcwd()
 
     if not os.path.isdir(target_directory):
         print(f"Error: The specified path '{target_directory}' is not a valid directory."); return
@@ -260,8 +277,13 @@ def main():
                 'publisher_normalized': normalized
             }
         print("Assembly complete.")
-        print("\n--- All Collected Metadata ---")
-        print(json.dumps(final_metadata, indent=2))
+        
+        try:
+            with open(output_filename, 'w') as f:
+                json.dump(final_metadata, f, indent=2)
+            print(f"\n--- All Collected Metadata written to {output_filename} ---")
+        except IOError as e:
+            print(f"\n[!] Error writing to output file '{output_filename}': {e}")
 
     except KeyboardInterrupt:
         print("\n\n[!] Keyboard interrupt received. Exiting gracefully.")
