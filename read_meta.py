@@ -33,6 +33,7 @@ def show_help():
     print("                          (default: metadata-processed.json)")
     print("  -v, --verbose           Enable verbose output to see detailed progress and errors.")
     print("  --force-reload          Ignore the cache and re-process all files.")
+    print("  --ai                    Enable AI to normalize publisher names (requires API key).")
 
 
 def load_cache(cache_file):
@@ -151,9 +152,10 @@ def main():
         show_help()
         return
 
+    use_ai = '--ai' in args
     verbose = '-v' in args or '--verbose' in args
     force_reload = '--force-reload' in args
-    args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload')]
+    args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload', '--ai')]
 
     # Defaults
     num_threads = os.cpu_count() or 4
@@ -276,15 +278,19 @@ def main():
             if not found_rule: publishers_for_ai.append(name)
         
         if publishers_for_ai:
-            if not API_KEY: print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
-            else:
-                try:
-                    with open(prompt_filepath, 'r') as f: prompt_template = f.read()
-                    ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
-                    publisher_map.update(ai_results)
-                    publisher_cache.update(ai_results)
-                except FileNotFoundError:
-                    print(f"\n[!] Prompt file not found at '{prompt_filepath}'. Skipping AI normalization.")
+            if use_ai:
+                if not API_KEY: print("[!] AI normalization skipped: GEMINI_API_KEY not set in .env file.")
+                else:
+                    try:
+                        with open(prompt_filepath, 'r') as f: prompt_template = f.read()
+                        ai_results = normalize_publishers_batch_ai(publishers_for_ai, prompt_template, verbose)
+                        publisher_map.update(ai_results)
+                        publisher_cache.update(ai_results)
+                    except FileNotFoundError:
+                        print(f"\n[!] Prompt file not found at '{prompt_filepath}'. Skipping AI normalization.")
+            elif verbose:
+                 print(f"[i] {len(publishers_for_ai)} publisher(s) could be normalized. Run with --ai to enable.")
+        
         print("Normalization complete.")
 
         print("\nStep 3: Assembling final results...")
