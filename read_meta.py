@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from PyPDF2 import PdfReader
 from ebooklib import epub
@@ -47,14 +48,23 @@ def get_pdf_metadata(file_path):
 def main():
     """
     Main function to find and process files, collecting their metadata.
+    Accepts an optional command-line argument for the target directory.
     """
-    current_directory = os.getcwd()
-    print(f"Scanning for files in: {current_directory}\n")
+    if len(sys.argv) > 1:
+        target_directory = sys.argv[1]
+    else:
+        target_directory = os.getcwd()
+
+    if not os.path.isdir(target_directory):
+        print(f"Error: The specified path '{target_directory}' is not a valid directory.")
+        return
+
+    print(f"Scanning for files in: {target_directory}\n")
 
     all_metadata = {}
 
-    for filename in os.listdir(current_directory):
-        file_path = os.path.join(current_directory, filename)
+    for filename in os.listdir(target_directory):
+        file_path = os.path.join(target_directory, filename)
         
         book_meta = None
         if filename.lower().endswith('.epub'):
