@@ -61,10 +61,10 @@ Run the script from your terminal, pointing it to the directory containing your 
 ### **Basic Usage**
 
 To scan the current directory and create symlinks:  
-python read\_meta.py
+python symlinker.py
 
 To scan a specific directory:  
-python read\_meta.py /path/to/your/ebooks
+python symlinker.py /path/to/your/ebooks
 
 ### **Command-Line Options**
 
@@ -89,19 +89,19 @@ python read\_meta.py /path/to/your/ebooks
    * See what the script will do without making changes.  
    * Run with \--force-reload and \--force-normalize the first time to build caches from scratch.
 
-python read\_meta.py /path/to/books \-v \-s \--force-reload \--force-normalize
+python symlinker.py /path/to/books \-v \-s \--force-reload \--force-normalize
 
 2. **AI Normalization (Dry Run):**  
    * Add the \--ai flag to see how the AI would normalize the remaining publishers.
 
-python read\_meta.py /path/to/books \-v \-s \--ai
+python symlinker.py /path/to/books \-v \-s \--ai
 
 3. **Live Run:**  
    * Once you're happy with the test output, remove the \-s flag to create the symlinks and generate the final JSON output.
 
-python read\_meta.py /path/to/books \-v \--ai
+python symlinker.py /path/to/books \-v \--ai
 
 4. **Subsequent Runs:**  
    * The script will now be very fast, as it will only process new or changed files.
 
-python read\_meta.py /path/to/books  
+python symlinker.py /path/to/books  
