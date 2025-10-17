@@ -26,7 +26,6 @@
 "Maker Media","Maker Media","Make"
 "Mercury Learning and Information","Mercury Learning"
 "Microcosm Publishing","Microcosm"
-"Unknown Publisher","N/A","None","publisher"
 "New Harbinger Publications","New Harbinger"
 "Night Shade Books","Night Shade"
 "No Starch Press","No Starch"
@@ -57,3 +56,4 @@
 "White Lion Publishing","White Lion"
 "Zephyros Press","Zephyros"
 "Zondervan","Zondervan"
+"Unknown Publisher","pdf","Acrobat Distiller","Acrobat Pro", "Adobe Acrobat","Adobe PDF","Adobe Photoshop","calibre","iText","macOS","Mac OS","null","N/A","None","publisher"
