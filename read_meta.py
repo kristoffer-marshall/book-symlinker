@@ -35,7 +35,8 @@ def show_help():
     print("  -r, --rules FILE        Path to a custom publisher normalization CSV file.")
     print(f"                         (default: {DEFAULT_RULES_FILE})")
     print("  -v, --verbose           Enable verbose output to see detailed progress and errors.")
-    print("  --force-reload          Ignore the cache and re-process all files.")
+    print("  --force-reload          Ignore the file metadata cache and re-read all files.")
+    print("  --force-normalize       Ignore the publisher cache and re-normalize all publishers.")
     print("  --ai                    Enable AI to normalize publisher names (requires API key).")
 
 
@@ -128,7 +129,7 @@ def extract_epub_metadata(file_path, verbose=False):
         return {
             'title': book.get_metadata('DC', 'title')[0][0] if book.get_metadata('DC', 'title') else 'N/A',
             'authors': [author[0] for author in book.get_metadata('DC', 'creator')] if book.get_metadata('DC', 'creator') else [],
-            'publisher': book.get_metadata('DC', 'publisher')[0][0] if book.get_metadata('DC', 'publisher') else 'N/A',
+            'publisher': book.get_metadata('DC', 'publisher')[0][0] if book.get_metadata('DC', 'publisher') else None,
         }
     except Exception as e:
         if verbose: print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
@@ -140,11 +141,11 @@ def extract_pdf_metadata(file_path, verbose=False):
         with open(file_path, 'rb') as f:
             reader = PdfReader(f)
             meta = reader.metadata
-            if not meta: return {'title': 'N/A', 'authors': [], 'publisher': 'N/A'}
+            if not meta: return {'title': 'N/A', 'authors': [], 'publisher': None}
             return {
                 'title': meta.title or 'N/A',
                 'authors': [meta.author] if meta.author else [],
-                'publisher': meta.producer or 'N/A',
+                'publisher': meta.producer or None,
             }
     except Exception as e:
         if verbose: print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
@@ -190,7 +191,8 @@ def main():
     use_ai = '--ai' in args
     verbose = '-v' in args or '--verbose' in args
     force_reload = '--force-reload' in args
-    args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload', '--ai')]
+    force_normalize = '--force-normalize' in args
+    args = [arg for arg in args if arg not in ('-v', '--verbose', '--force-reload', '--ai', '--force-normalize')]
 
     # Defaults
     num_threads = os.cpu_count() or 4
@@ -238,7 +240,12 @@ def main():
         print(f"Error: The specified path '{target_directory}' is not a valid directory."); return
 
     metadata_cache = load_cache(METADATA_CACHE_FILE)
-    publisher_cache = load_cache(PUBLISHER_CACHE_FILE)
+    if force_normalize:
+        if verbose: print("[i] Force normalize enabled, ignoring existing publisher cache.")
+        publisher_cache = {}
+    else:
+        publisher_cache = load_cache(PUBLISHER_CACHE_FILE)
+        
     rules = load_rules_from_csv(rules_filepath, verbose)
     
     try:
@@ -299,7 +306,8 @@ def main():
         else:
             print("No new or modified files to process. Loading all metadata from cache.")
 
-        all_publishers = {meta['publisher'] for meta in raw_metadata_list if meta.get('publisher') and meta['publisher'] != 'N/A'}
+        # Correctly gather all publishers, including None, for normalization.
+        all_publishers = {meta['publisher'] for meta in raw_metadata_list if 'publisher' in meta}
         
         print("\nStep 2: Normalizing publisher names...")
         publisher_map = {}
@@ -311,7 +319,7 @@ def main():
                 publisher_map[name] = publisher_cache[name]
                 if name != publisher_cache[name]: # Count cached normalizations that were from rules
                     # This logic is imperfect but gives a decent estimate
-                    lower_name = name.lower()
+                    lower_name = name.lower() if name else "null"
                     is_rule_match = False
                     for keywords, _ in rules:
                         if any(kw in lower_name for kw in keywords):
@@ -320,10 +328,11 @@ def main():
                             break
                 continue
 
-            lower_name = name.lower()
+            # Treat None as the string "null" for matching purposes
+            match_target = name.lower() if name else "null"
             found_rule = False
             for keywords, canonical in rules:
-                if any(kw in lower_name for kw in keywords):
+                if any(kw in match_target for kw in keywords):
                     publisher_map[name] = canonical
                     publisher_cache[name] = canonical
                     if name != canonical:
