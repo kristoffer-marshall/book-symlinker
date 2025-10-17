@@ -68,7 +68,7 @@ def load_rules_from_csv(filepath, verbose=False):
                 if not row: continue
                 canonical_name = row[0]
                 # The csv reader automatically handles removing the quotes
-                keywords = [k.lower() for k in row[1:] if k]
+                keywords = [k.lower().strip() for k in row[1:] if k]
                 rules.append((keywords, canonical_name))
         if verbose: print(f"[i] Loaded {len(rules)} normalization rules from '{filepath}'.")
     except FileNotFoundError:
@@ -317,31 +317,30 @@ def main():
         for name in all_publishers:
             if name in publisher_cache:
                 publisher_map[name] = publisher_cache[name]
-                if name != publisher_cache[name]: # Count cached normalizations that were from rules
-                    # This logic is imperfect but gives a decent estimate
-                    lower_name = name.lower() if name else "null"
-                    is_rule_match = False
-                    for keywords, _ in rules:
-                        if any(kw in lower_name for kw in keywords):
-                            rules_normalized_count += 1
-                            is_rule_match = True
-                            break
+                if name != publisher_cache[name]:
+                    rules_normalized_count +=1
                 continue
 
-            # Treat None as the string "null" for matching purposes
             match_target = name.lower() if name else "null"
-            found_rule = False
+            best_match_len = 0
+            best_canonical = None
+            
+            # Find the best (longest) keyword match from all rules
             for keywords, canonical in rules:
-                if any(kw in match_target for kw in keywords):
-                    publisher_map[name] = canonical
-                    publisher_cache[name] = canonical
-                    if name != canonical:
-                        rules_normalized_count += 1
-                    found_rule = True
-                    break
-            if not found_rule:
+                for kw in keywords:
+                    if kw in match_target:
+                        if len(kw) > best_match_len:
+                            best_match_len = len(kw)
+                            best_canonical = canonical
+            
+            if best_canonical:
+                publisher_map[name] = best_canonical
+                publisher_cache[name] = best_canonical
+                if name != best_canonical:
+                    rules_normalized_count += 1
+            else:
                 publishers_for_ai.append(name)
-        
+
         ai_results = {}
         ai_normalized_count = 0
         if publishers_for_ai:
