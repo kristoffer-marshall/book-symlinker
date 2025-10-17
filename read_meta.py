@@ -75,6 +75,28 @@ def load_rules_from_csv(filepath, verbose=False):
         if verbose: print(f"[!] Rules file not found at '{filepath}'. No rules loaded.")
     return rules
 
+def is_bad_title(title):
+    """Checks if a title string is likely not a real book title."""
+    if not title or not title.strip():
+        return True
+    
+    lower_title = title.lower()
+    
+    if lower_title == 'n/a':
+        return True
+        
+    # Check for common file extensions or software-generated names
+    bad_substrings = [
+        '.indd', '.docx', '.doc', '.pdf', '.qxd', 
+        'microsoft word -'
+    ]
+    
+    for sub in bad_substrings:
+        if sub in lower_title:
+            return True
+    
+    return False
+
 def normalize_publishers_batch_ai(publisher_list, prompt_template, verbose=False):
     """
     Normalizes a list of publisher names in a single batch API call.
@@ -380,13 +402,18 @@ def main():
         for raw_meta in raw_metadata_list:
             publisher = raw_meta['publisher']
             normalized = publisher_map.get(publisher, publisher)
+            title = raw_meta['title']
             
+            # If the title is determined to be a bad/placeholder title, use the filename.
+            if is_bad_title(title):
+                title = os.path.splitext(raw_meta['filename'])[0]
+
             if verbose and publisher != normalized:
                 source = "(AI)" if publisher in ai_results else "(rule)"
                 print(f"  [v] Normalized '{raw_meta['filename']}': '{publisher}' -> '{normalized}' {source}")
 
             final_metadata[raw_meta['filename']] = {
-                'title': raw_meta['title'],
+                'title': title,
                 'authors': raw_meta['authors'],
                 'publisher': publisher,
                 'publisher_normalized': normalized
