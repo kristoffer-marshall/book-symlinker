@@ -1,0 +1,4 @@
+PyPDF2
+ebooklib
+python-dotenv
+requests

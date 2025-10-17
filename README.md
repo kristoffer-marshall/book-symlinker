@@ -21,7 +21,7 @@ It uses a multi-threaded approach for speed, caches results to make subsequent r
 ## **Prerequisites**
 
 Before running the script, you need to install the required Python libraries.  
-pip install PyPDF2 ebooklib python-dotenv requests
+pip install -r requirements.txt
 
 ## **Configuration**
 
