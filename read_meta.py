@@ -126,10 +126,15 @@ def extract_epub_metadata(file_path, verbose=False):
     """Extracts raw metadata from an EPUB file."""
     try:
         book = epub.read_epub(file_path)
+        # Explicitly cast metadata to strings to handle potential non-string types
+        title = book.get_metadata('DC', 'title')
+        creators = book.get_metadata('DC', 'creator')
+        publisher = book.get_metadata('DC', 'publisher')
+        
         return {
-            'title': book.get_metadata('DC', 'title')[0][0] if book.get_metadata('DC', 'title') else 'N/A',
-            'authors': [author[0] for author in book.get_metadata('DC', 'creator')] if book.get_metadata('DC', 'creator') else [],
-            'publisher': book.get_metadata('DC', 'publisher')[0][0] if book.get_metadata('DC', 'publisher') else None,
+            'title': str(title[0][0]) if title else 'N/A',
+            'authors': [str(author[0]) for author in creators] if creators else [],
+            'publisher': str(publisher[0][0]) if publisher else None,
         }
     except Exception as e:
         if verbose: print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
@@ -142,10 +147,11 @@ def extract_pdf_metadata(file_path, verbose=False):
             reader = PdfReader(f)
             meta = reader.metadata
             if not meta: return {'title': 'N/A', 'authors': [], 'publisher': None}
+            # Explicitly cast metadata to strings to handle PyPDF2's specific object types
             return {
-                'title': meta.title or 'N/A',
-                'authors': [meta.author] if meta.author else [],
-                'publisher': meta.producer or None,
+                'title': str(meta.title) if meta.title else 'N/A',
+                'authors': [str(meta.author)] if meta.author else [],
+                'publisher': str(meta.producer) if meta.producer else None,
             }
     except Exception as e:
         if verbose: print(f"\n[!] Error processing {os.path.basename(file_path)}: {e}")
